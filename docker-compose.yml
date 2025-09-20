@@ -1,0 +1,147 @@
+version: "3.9"
+
+name: local-ai-arch
+
+networks:
+  ai:
+    driver: bridge
+
+volumes:
+  ollama_models:
+  openwebui_data:
+  qdrant_data:
+  flowise_data:
+  minio_data:
+  wiremock_tickets:
+  wiremock_erp:
+  wiremock_crm:
+
+services:
+  # ===== LLM / Modelle =====
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    restart: unless-stopped
+    networks: [ai]
+    ports:
+      - "11434:11434"   # Ollama API
+    volumes:
+      - ollama_models:/root/.ollama
+
+  openwebui:
+    image: ghcr.io/open-webui/open-webui:main
+    container_name: openwebui
+    restart: unless-stopped
+    networks: [ai]
+    depends_on: [ollama]
+    ports:
+      - "3001:8080"     # WebUI
+    environment:
+      - OLLAMA_BASE_URL=http://ollama:11434
+    volumes:
+      - openwebui_data:/app/backend/data
+
+  # ===== Model/Tool Proxy (OpenAI-kompatibel) =====
+  litellm:
+    image: ghcr.io/berriai/litellm:main
+    container_name: litellm
+    restart: unless-stopped
+    networks: [ai]
+    depends_on: [ollama]
+    ports:
+      - "4000:4000"     # OpenAI-kompatible Proxy-API
+    environment:
+      # Route "ollama/llama3" etc. über LiteLLM:
+      - LITELLM_LOG=info
+      - LITELLM_LOCAL_MODEL=ollama/llama3
+      - OLLAMA_BASE_URL=http://ollama:11434
+    command: >
+      --port 4000
+      --host 0.0.0.0
+      --num_workers 1
+      --adapter ollama
+      --model ollama/llama3
+
+  # ===== VectorDB =====
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: qdrant
+    restart: unless-stopped
+    networks: [ai]
+    ports:
+      - "6333:6333"     # HTTP
+      - "6334:6334"     # gRPC
+    volumes:
+      - qdrant_data:/qdrant/storage
+
+  # ===== Flow/Orchestrator =====
+  flowise:
+    image: flowiseai/flowise:latest
+    container_name: flowise
+    restart: unless-stopped
+    networks: [ai]
+    depends_on: [qdrant, litellm]
+    ports:
+      - "3000:3000"     # Flowise UI
+    environment:
+      - PORT=3000
+      - FLOWISE_USERNAME=admin
+      - FLOWISE_PASSWORD=admin
+      - DATABASE_PATH=/root/.flowise
+      - FLOWISE_FILE_STORAGE_PATH=/root/.flowise/storage
+      # Qdrant + LiteLLM/Ollama:
+      - QDRANT_URL=http://qdrant:6333
+      - OPENAI_API_BASE=http://litellm:4000/v1
+      - OPENAI_API_KEY=dummy-key
+    volumes:
+      - flowise_data:/root/.flowise
+
+  # ===== Knowledge (Optional: DMS/Bucket für Dokumente) =====
+  minio:
+    image: quay.io/minio/minio:latest
+    container_name: minio
+    restart: unless-stopped
+    networks: [ai]
+    ports:
+      - "9000:9000"   # S3 API
+      - "9001:9001"   # Console
+    environment:
+      - MINIO_ROOT_USER=admin
+      - MINIO_ROOT_PASSWORD=adminadmin
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio_data:/data
+
+  # ===== Integrationen (Platzhalter-APIs) =====
+  ticketsystem:
+    image: wiremock/wiremock:2.35.0
+    container_name: ticketsystem
+    restart: unless-stopped
+    networks: [ai]
+    ports:
+      - "7010:8080"
+    command: ["--verbose"]
+    volumes:
+      - wiremock_tickets:/home/wiremock
+
+  erp:
+    image: wiremock/wiremock:2.35.0
+    container_name: erp
+    restart: unless-stopped
+    networks: [ai]
+    ports:
+      - "7020:8080"
+    command: ["--verbose"]
+    volumes:
+      - wiremock_erp:/home/wiremock
+
+  crm:
+    image: wiremock/wiremock:2.35.0
+    container_name: crm
+    restart: unless-stopped
+    networks: [ai]
+    ports:
+      - "7030:8080"
+    command: ["--verbose"]
+    volumes:
+      - wiremock_crm:/home/wiremock
