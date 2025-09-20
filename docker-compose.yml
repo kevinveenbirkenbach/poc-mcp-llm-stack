@@ -35,32 +35,32 @@ services:
     networks: [ai]
     depends_on: [ollama]
     ports:
-      - "3001:8080"     # WebUI
+      - "3001:8080"
     environment:
       - OLLAMA_BASE_URL=http://ollama:11434
+      - OFFLINE_MODE=1          # blockt Netz-Zugriffe der App
+      - HF_HUB_OFFLINE=1        # zwingt HF-Client in Offline-Mode
+      - ENABLE_PERSISTENT_CONFIG=False  # nimm ENV 1:1, ignoriere persistente Defaults
     volumes:
       - openwebui_data:/app/backend/data
 
   # ===== Model/Tool Proxy (OpenAI-kompatibel) =====
   litellm:
-    image: ghcr.io/berriai/litellm:main
+    image: ghcr.io/berriai/litellm:main-v1.77.3.dynamic_rates
     container_name: litellm
     restart: unless-stopped
     networks: [ai]
     depends_on: [ollama]
-    ports:
-      - "4000:4000"     # OpenAI-kompatible Proxy-API
+    ports: ["4000:4000"]
     environment:
-      # Route "ollama/llama3" etc. über LiteLLM:
-      - LITELLM_LOG=info
-      - LITELLM_LOCAL_MODEL=ollama/llama3
-      - OLLAMA_BASE_URL=http://ollama:11434
+      - LITELLM_MASTER_KEY=dummy-key
+      - LITELLM_CONFIG=/etc/litellm/config.yaml
+    volumes:
+      - ./litellm.config.yaml:/etc/litellm/config.yaml:ro
     command: >
-      --port 4000
       --host 0.0.0.0
-      --num_workers 1
-      --adapter ollama
-      --model ollama/llama3
+      --port 4000
+      --config /etc/litellm/config.yaml
 
   # ===== VectorDB =====
   qdrant:
